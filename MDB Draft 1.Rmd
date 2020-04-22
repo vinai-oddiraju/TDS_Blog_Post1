@@ -1,0 +1,244 @@
+---
+title: "Estimating Company Revenue Growth With the Normal-Normal Model"
+author: "Vinai Oddiraju"
+date: "April 1, 2020"
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
+---
+
+##Introduction
+
+Maybe you're an investor trying to decide whether a stock is worth investing in. Maybe you've only recently heard of Bayesian inference and want to get a sense of how it can be applied in the real world. Maybe you're a seasoned data scientist who stumbled upon this article and found the title interesting. Regardless of where you come from, I thank you for giving this piece a read. I'm going to talk about the normal-normal model, one of the most commonly used models in Bayesian inference, and how it can be used to estimate the growth rate of a company's revenue. That estimate can then be used to decide whether or not the company is a worthy investment. 
+
+The first objective of this piece is to demonstrate how the normal-normal model can be used to incorporate a subjective overlay into data analysis. The second is to provide some intuition behind the normal-normal model and Bayesian inference in general without getting too bogged down in the mechanics. I'll say it here and probably more times than you'll care to read, but this piece does not constitute investment advice. It is meant to be educational.
+
+With that disclaimer out of the way, let's get to it!
+
+##The Task at Hand
+
+Financial modeling generally refers to projecting fundamental values for a company in order to arrive at a fair price estimate for the company’s stock. Some of the most common metrics used to arrive at valuations are revenue, earnings, and cash flow. The company we’re going to look at is MongoDB. Most data professionals and enthusiasts have at least heard of MongoDB at this point if not actually used the software. The company began trading publicly back in 2017, and its revenue growth has been tremendous. 
+
+```{r}
+library(ggplot2)
+annual_rev = c(40788, 65271, 114805, 166028, 267016, 421720)
+ggplot() +
+  geom_col(aes(x = 2014:2019, y = annual_rev), color = "blue", alpha = .3) +
+  theme_bw() +
+  ggtitle("Revenue per Calendar Year") +
+  ylab("Revenue in 1000s of USD") +
+  xlab("Fiscal Year")
+
+```
+\n
+
+Given how young the company is and how it’s in a growth-oriented phase of its existence, it’s reasonable to focus on revenue in order to value the company. Data in the company’s 10-K filings, the annual financial reports, shows revenue numbers on a quarterly basis starting in fiscal 2016. Annual numbers are present from the year 2014 onwards. To give us more data than the six annual numbers (which translate into five growth numbers), I've computed rolling one-year revenue growth on a quarterly basis. That data is shown below.
+
+```{r}
+library(knitr)
+rolling_rev_growth = c(0.505881259, 0.507835663, 0.577190648, 0.504676956, 0.488792837,
+                       0.61488764, 0.566356537, 0.897915233, 0.853676745, 0.728439729,
+                       0.68409633, 0.444983857)
+prd = c("Q1 2017", "Q2 2017", "Q3 2017", "Q4 2017", "Q1 2018", "Q2 2018", "Q3 2018", 
+        "Q4 2018", "Q1 2019", "Q2 2019", "Q3 2019", "Q4 2019")
+
+kable(x = cbind(prd, rolling_rev_growth), 
+      col.names = c("Period", "Rolling Revenue Growth"), align = 'l')
+
+```
+
+
+Closer to the end of this piece, I’ll compare the results of our analysis using year-end data versus quarterly data. (Although I haven't run a formal analysis, I assume there's a degree of serial correlation in the quarterly data. This won't matter in terms of explaining the concepts of the normal-normal model, but it is certainly something to be mindful of in practice.)
+
+A common way to project revenue for a company is to use the average historical revenue growth rate over a certain amount of time. For companies with many years of data, this isn't necessarily a bad practice, especially if the growth rates follow a normal distribution. Given how little sample data we have and the histogram of the data which I'll plot below, we may feel that using the sample mean in this case is unwise.
+
+```{r}
+ggplot() +
+  geom_histogram(aes(rolling_rev_growth), color = "blue", alpha = .3,
+                 binwidth = .1) +
+  xlab("Growth") +
+  ylab("Frequency")
+```
+
+Bayesian inference is particularly useful in situations where our sample size is small and we hold a subjective belief that our sample data does not appropriately represent what a larger sample would look like.
+
+To conduct Bayesian inference, we'll need a prior distribution and a sampling model. Before defining those distributions in our context, I'll go over some of the basics of Bayesian inference and how the prior distribution and sampling model come into play. Feel free to skip this section if you're familiar with Bayes' theorem and how it applies to distributions.
+
+##Bayes' Theorem and Distributions
+
+In its simplest form, Bayes’ theorem is defined as 
+
+$P(A|B) = \frac{P(A,B)}{P(B)}$, which is equivalent to 
+
+$\frac{P(B|A)P(A)}{P(B)}$.
+
+This is all well and good if we have neatly defined probabilities to use, but distributions complicate the process just a little. 
+
+First, let's substitute $A$ with $\theta$ and $B$ with $Y$. In this case, $Y$ refers to each point in our sample data with each point being defined by $Y_i$. $\theta$ refers to the true average growth rate in revenue for MongoDB. Re-writing the second form of the formula with our substitutions, we have 
+
+$P(\theta|Y) = \frac{P(Y|\theta)P(\theta)}{P(Y)}$.
+
+In words, the distribution we're trying to model is the distribution of average revenue growth rate GIVEN our sample growth rates. We will use our sample data and a little bit of judgement to define this distribution $P(Y|\theta)$. We will also need a prior distribution $P(\theta)$ for our average growth rate and the marginal distribution of our data $P(Y)$. The onus is on us to define our sampling distribution as well as define a prior distribution for $\theta$. Once we have a sampling distribution $P(Y|\theta)$, the correct way to obtain $P(Y)$ would be to solve for the integral below:
+
+$\int{P(Y|\theta)d\theta}$. 
+
+In practice, this may be difficult to do, but we can use a shortcut. Since $Y$ is only conditional on $\theta$ in this instance, $P(Y)$ is an unconditional probability distribution and encompasses all possibilities of $Y$. This means that the area under the distribution will be equal to 1 (the sum of all probabilities for an event equals 1), and the integral will be equal to 1 multiplied by a normalizing constant. Rather than solve for this normalizing constant, we can instead say 
+
+$P(\theta|Y) \propto P(Y|\theta)P(\theta)$ 
+
+where $\propto$ stands for "is proportional to." In other words, we don't need to worry about $P(Y)$. With one task eliminated, we only have to define our sampling and prior distributions.
+
+(Note: technically, $Y$ is conditional on $\sigma^2$, so the proper form of the distribution should be $P(Y|\theta,\sigma^2)$. As I'll explain in just a bit, because $\sigma^2$ is assumed to be known and a constant, I omitted it from the notation.)
+
+##Defining Our Sampling Model and Prior Distribution
+
+We're going to use a normal model for our sampling distribution. Having looked at the histogram for our data, one may think that there are distributions available to us that better represent the data. I like the normal distribution in this case because it is continuous and has support along all real numbers (revenue growth could theoretically be negative or positive).
+
+To define this sampling model, we compute the mean and variance for this data set and use these as the parameters for our sampling model. The form this will take is $Y \sim N(\theta, \sigma^2)$ where $\theta$ represents the unknown true average growth rate for MongoDB’s revenue while $\sigma^2$ represents the variance of the growth rates; we will treat this variance as known. We could just as easily assume that we know our mean but not our variance or that we know neither; all three classes of situations are well-documented and have substantial literature regarding how to work them. The normal-normal model applies to the situation with known variance and unknown mean, hence why we are making our current assumptions.
+
+```{r}
+samp_theta = mean(rolling_rev_growth)
+samp_sigma2 = var(rolling_rev_growth)
+```
+
+Our sample mean is about .614, and our sample variance is about .0217. 
+
+Next, we need to define a prior distribution for $\theta$. For the same reasons that we're using a normal distribution for the sampling model (continuous, support along positive and negative values), we're going to use a normal distribution as our prior. We need to define a mean and a variance for the variable $\theta$. We'll call this prior mean $\mu_0$ and the prior variance $\tau_0$. There is significant literature dedicated to selecting priors; the main focus of this piece is how to apply the normal normal model, so I didn't put extensive effort in defining my prior distribution.
+
+To select a value for $\mu_0$, I looked at the average revenue growth rate of sales of the S&P 500 index over the last 19 years (multpl.com) and then multiplied it by the $\beta$ of MongoDB. In the world of equites, $\beta$ refers to the covariance of an individual stock’s returns with the return of broader basket of stocks (often called an index) divided by the variance of the index returns. MongoDB has a $\beta$ of about 1.26 according to Seeking Alpha, a research site with news, data, and analyses of many stocks. Whenever we see a $\beta$ > 1, we can assume that the stock we are looking at is more volatile than the index it is being compared to; for this reason, I multiply the revenue growth of the index by $\beta$. Other approaches could involve looking at slightly older companies in the software service industries or similar age companies across industries. No method is perfect, and all are viable. 
+
+The next parameter we have to assign is the prior variance. Just to be clear, this is not what we presume is the variance in growth rates, but the presumed variance of the AVERAGE growth rate; this prior variance is meant to reflect our certainty in the accuracy of the prior mean. If we had full confidence that this was the correct mean to use, we could set our variance effectively equal to 0 (for computation purposes, we can’t actually use 0, but we can use a very small number such as $10^{-4}$). On the other hand, if we have very little confidence in our estimate, we can use a large variance to indicate this level of certainty. In this case, where our prior mean is about 4.5%, I don’t have much of an opinion of how confident I am with this estimate. To define my distribution, I’ll use a standard deviation of 10%. With this, I’m effectively stating that I’m 95% confident that the true value for theta lies between -15.5% and 24.5% ($4.5+/-2\tau_0^2$). This estimate may seem highly conservative given how MongoDB’s average growth rate has been about 61%, but this is exactly why Bayesian inference is powerful. MongoDB has spent the majority of its time trading in a bull market that was particularly favorable for software names. The prior distribution reflects data from multiple market cycles and consequently multiple phases of growth and contraction. Between the possibility of economic contraction, the chance MongoDB doesn't execute its strategy effectivey, and revenue growth slowing simply due to scale, I'm holding the subjective belief that MongoDB's true average growth rate is less than what the sample data suggests. The prior distribution I've selected represents that belief. Now, we can study the output of our analysis. 
+
+To recap, here are the forms for our two models:
+
+Sampling: $Y \sim N(\theta = .614, \sigma^2 =  .0217)$
+
+Prior: $\theta \sim N(\mu_0 = .045, \tau^2_0 = .01^2)$
+
+Great, let's move on to our analysis!
+
+##Posterior Analysis and Intuition
+
+I’ll focus more on the intuition offered by these forms rather than walk through a derivation by hand. Anyone truly interested in using the normal-normal model should study the derivation of the above parameters. Wikipedia has some good documentation, and most introductory textbooks to Bayesian statistics cover the derivations in detail.
+
+When we have a normal distribution for our sampling model as well as a normal for our prior distribution on the sample mean, the resulting posterior distribution is a product of two normal models. The power of the normal-normal model is that the product of these distributions is also a normal distribution, albeit with updated parameters. In Bayesian jargon, a normal prior distribution is a conjugate prior distribution, meaning that it and its resulting posterior distribution have the same form. The fact that our posterior distribution is a normal distribution may not seem like that big of a deal, but depending on the data we're trying to model and the parameters we're trying to estimate, there are many instances where our posterior does not take such a familiar form. Because this posterior distribution is well-defined, we can sample from it directly and consequently compute summary statistics on it easily. 
+
+The notations and reparametrizations below are from Chapter 5 in Peter Hoff's textbook, "A First Course in Bayesian Statistics," the book I used in my first undergraduate Bayesian statistics course and the book I've been studying in recent times.
+
+Our posterior distribution takes the form
+
+$\theta_n \sim N(\mu_n, \sigma^2_n)$
+
+where $\mu_n$ refers to the posterior mean and $\tau_n^2$ refers to the posterior variance. The formulas to calculate these updated parameters are 
+
+$\mu_n = \frac{\mu_0 /\tau_0^2 + n\bar{y}/\sigma^2}{1/\tau_0^2 + n/\sigma^2}$
+
+and
+
+$\tau_n^2 = \frac{1}{1/\tau_0^2 + n/\sigma^2}$
+
+These formulas may look somewhat intimidating, but hopefully you see some similarities between them. A common practice and a particularly helpful one for gaining intuition about these formulas is to look at the formulas in terms of precision rather than variance. Precision is the inverse of variance.
+
+In this case, we have three relevant precisions to observe:
+
+Sampling precision $\tilde{\sigma}^2 = 1/\sigma^2$,
+
+prior precision $\tilde{\tau_0}^2 = 1/\tau_0^2$, 
+
+and posterior precision $\tilde{\tau_n}^2 = 1/\tau_n^2$. 
+
+If we invert the posterior variance formula to calculate posterior precision, we see that the posterior precision in terms of standard deviations is
+
+$\frac{1}{\tau_n^2} = \frac{1}{\tau_0^2} + \frac{n}{\sigma^2}$. This can be written in terms of precisions as 
+
+$\tilde{\tau_n}^2 = \tilde{\tau_0}^2 + n\tilde{\sigma}^2$. 
+
+In this form we can clearly see that the posterior precision is the sum of the prior precision and the sample precision multiplied by the sample size. We can also re-write the posterior mean in terms of precisions:
+
+$\mu_n = \frac{\tilde{\tau_0}^2}{\tilde{\tau_0}^2 + n\tilde{\sigma}^2}\mu_0 + \frac{n\tilde{\sigma}^2}{\tilde{\tau_0}^2 + n\tilde{\sigma}^2} \bar{y}$
+
+Here, we can clearly see that the posterior mean is a weighted average of the prior mean and sample mean. For our data, the posterior parameters are:
+
+```{r}
+mu_prior = .045
+tau_sq_prior = .01
+n = length(rolling_rev_growth)
+#samp_sigma = sqrt(samp_sigma2)
+post_theta = (1/ (1/(tau_sq_prior) + n/(samp_sigma2))) *
+  (mu_prior/(tau_sq_prior) + sum(rolling_rev_growth)/(samp_sigma2))
+
+post_tau = (1/(tau_sq_prior) + n/(samp_sigma2))^(-1)
+post_sd = sqrt(post_tau)
+```
+
+$\mu_n = .527$ 
+
+$\tau_n^2 = .00153$
+
+$\tau_n = .0391$
+
+And there we have them -- our updated parameters. Our posterior estimate for the average growth rate is about 52.7% -- a decent bit lower than our sample average, but not overwhelmingly lower. We've taken a subjective belief, represented that belief with a distribution, and used that distribution to augment our analysis. Hooray! This is the power of Bayesian inference. As long as we can define our beliefs, we can incorporate them in a rigorous way in our analysis. Let's talk a little more about what we have and also what we don't have. 
+
+With our posterior standard deviation, we can compute a credible interval for our estimate. For those new to Bayesian statistics, a credible interval is not the same thing as a confidence interval even though they are computed in a similar manner. Our 95% credible interval for $\theta_n$ is $.527 +/- 2*.0391$ which leads to points of 44.88% and 60.52%. With this credible interval, we're making the statement that we're 95% sure that the true value of $\theta_n$ falls within the interval. Even at this point, we don't treat $\theta_n$ as a known entity. Furthermore, we are not saying that 52.7% is our forecast fo revenue growth rate over the next rolling one-year period. If we wanted to make a forecast within this framework, we'd use the posterior predictive distribution. Since that is a separate topic, I won't touch on it here, but the process of deriving that distribution is similar to deriving the posterior distribution.
+
+Two key implications should be noted from this analysis: the first is that as sample size $n$ grows larger, the posterior mean and posterior variance are more and more determined by the sample data. I'm not going to state that there's an explicit cutoff, but at some amount of data, adding a prior doesn't move the needle much all else equal. Intuitively, this is reasonable. If you have rich enough sampling data, the sampling data likely represents the actual structure in the data, and you may not see the need to utilize a prior distribution. To emphasize the first point, we can re-run our analysis using strictly the year-end data which would leave us with a sample size of five. We'll use our same prior distribution. 
+
+```{r}
+year_end_change = c(0.600250074, 0.75889752, 0.446173947,0.608258848, 0.579381011)
+
+samp_theta2 = mean(year_end_change)
+samp_sigma_sq2 = var(year_end_change)
+samp_sigma_2 = sd(year_end_change)
+n2 = length(year_end_change)
+
+post_theta2 = (1/ (1/(tau_sq_prior) + n/(samp_sigma_sq2))) *
+  (mu_prior/(tau_sq_prior) + sum(year_end_change)/(samp_sigma_sq2))
+
+post_tau2 = (1/(tau_sq_prior) + n2/(samp_sigma_sq2))^(-1)
+post_sd2 = sqrt(post_tau2)
+```
+
+Our new sampling mean and variance are about 59.8% and .012 (or 11.1% standard deviation), and our posterior mean and variance are 23% and .0019 (or 4.45% standard deviation). This posterior estimate for the mean is much lower than what we saw in our first iteration; with our sample size cut significantly, the prior plays a much heavier role in the output. The standard deviation didn't change as much, but we can see that it's larger even though our sampling standard deviation was smaller the second time around. We have a much lower estimate, and we have slightly less confidence in the estimate (wider credible interval).
+
+The second implication of our analysis is that the smaller the prior variance, the greater the prior precision and the greater impact it has on both the posterior mean and posterior variance. The more confidence we have in our prior, the more it will affect our posterior estimates. To illustrate this point, I re-ran our original analysis with different values for $\tau_0^2$. The values for the prior mean are all .045, and the sampling mean and variance come from our rolling revenue data. The table below shows the results of this experiment. 
+
+```{r}
+prior_taus = c(.05, .10, .15, .2, .3)
+post_thetas = c(.376, .527, .572, .590, .603)
+post_taus = c(.032, .0391, .041, .0416, .0421)
+
+kable(x = cbind(prior_taus, post_thetas, post_taus), 
+      col.names = c("Prior Tau", "Post Theta", "Post Tau"), align = 'l',
+      caption = "Posterior Parameters with Different Prior Variance")
+
+```
+
+I'll also plot the distributions:
+
+```{r}
+dens_post05 = rnorm(n = 300, mean = post_thetas[1], sd = post_taus[1])
+dens_post10 = rnorm(n = 300, mean = post_thetas[2], sd = post_taus[2])
+dens_post15 = rnorm(n = 300, mean = post_thetas[3], sd = post_taus[3])
+dens_post20 = rnorm(n = 300, mean = post_thetas[4], sd = post_taus[4])
+dens_post30 = rnorm(n = 300, mean = post_thetas[5], sd = post_taus[5])
+
+
+ggplot() +
+  geom_density(aes(dens_post05, color = ".05")) +
+  geom_density(aes(dens_post10, color = ".10")) +
+  geom_density(aes(dens_post15, color = ".15")) +
+  geom_density(aes(dens_post20, color = ".20")) +
+  geom_density(aes(dens_post30, color = ".30")) +
+  scale_color_manual("", breaks = c(".05", ".10", ".15", ".20", ".30"),
+                     values = c("red", "magenta", "purple", "blue", "dark blue")) +
+  xlab("Range for Posterior Average Growth Rate (Theta)") +
+  ylab("Density") +
+  ggtitle("Posterior Distribution Plots")
+```
+
+Notice how much closer to the prior mean our posterior distribution with $\tau_0 = .05$ is. As we increase our prior variance (effectively signifying less confidence in the prior mean), the center of our posterior distribution moves closer to the sample mean. Also, while the magnitude of the changes in the posterior variances may not appear that great in the table, from the distribution plots above, we can see how the distributions get progressively wider; in other words, the credible interval for the true value of average growth widens. 
+
+##Summary
+
+Just to recap, we were analyzing a young company and wanted to estimate the true growth rate of its revenue. Given the small amount of sample data we had and a subjective belief that the average growth rate will be less than what the sample data suggests, we used Bayesian inference to augment our analysis. We defined a sampling model for our data, defined a prior for the average growth rate that reflected our subjective view, and utilized the normal-normal model to arrive at a posterior estimate and interval for the company's average growth rate. I hope you found this brief introduction to Bayesian inference as well as the analysis of the results useful. I don't recommend using the specific numbers in this piece for any valuation of MongbDB, but hopefully you can apply the concepts to your own analysis.  
